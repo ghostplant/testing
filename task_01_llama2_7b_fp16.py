@@ -40,7 +40,7 @@ for n_layers in range(1024):
 
 device = autort.device()
 for k in param:
-  print(f'Loading weight: {k}')
+  print(f'Loading weight: {k}, val_min = {param[k].min()}, val_max = {param[k].max()}')
   param[k] = param[k].to(device)
 print('')
 
@@ -123,7 +123,8 @@ def decode(prev, next):
   return piece
 
 if __name__ == '__main__':
-  prompt = 'How large is Atlantic Ocean'
+  # prompt = 'How large is Atlantic Ocean'
+  prompt = 'Once upon a time'
   prompt_tokens = [1] + [dictionary[f' {x}' if f' {x}' in dictionary else x] for x in prompt.split()]
 
   with torch.no_grad():

@@ -7,19 +7,78 @@ import torch
 import autort
 
 
+value_map = torch.tensor([
+    -1.0000, -0.9922, -0.9843, -0.9765, -0.9686, -0.9608, -0.9529, -0.9451,
+    -0.9373, -0.9294, -0.9216, -0.9137, -0.9059, -0.8980, -0.8902, -0.8824,
+    -0.8745, -0.8667, -0.8588, -0.8510, -0.8431, -0.8353, -0.8275, -0.8196,
+    -0.8118, -0.8039, -0.7961, -0.7882, -0.7804, -0.7725, -0.7647, -0.7569,
+    -0.7490, -0.7412, -0.7333, -0.7255, -0.7176, -0.7098, -0.7020, -0.6941,
+    -0.6863, -0.6784, -0.6706, -0.6627, -0.6549, -0.6471, -0.6392, -0.6314,
+    -0.6235, -0.6157, -0.6078, -0.6000, -0.5922, -0.5843, -0.5765, -0.5686,
+    -0.5608, -0.5529, -0.5451, -0.5373, -0.5294, -0.5216, -0.5137, -0.5059,
+    -0.4980, -0.4902, -0.4824, -0.4745, -0.4667, -0.4588, -0.4510, -0.4431,
+    -0.4353, -0.4275, -0.4196, -0.4118, -0.4039, -0.3961, -0.3882, -0.3804,
+    -0.3725, -0.3647, -0.3569, -0.3490, -0.3412, -0.3333, -0.3255, -0.3176,
+    -0.3098, -0.3020, -0.2941, -0.2863, -0.2784, -0.2706, -0.2627, -0.2549,
+    -0.2471, -0.2392, -0.2314, -0.2235, -0.2157, -0.2078, -0.2000, -0.1922,
+    -0.1843, -0.1765, -0.1686, -0.1608, -0.1529, -0.1451, -0.1373, -0.1294,
+    -0.1216, -0.1137, -0.1059, -0.0980, -0.0902, -0.0824, -0.0745, -0.0667,
+    -0.0588, -0.0510, -0.0431, -0.0353, -0.0275, -0.0196, -0.0118, -0.0039,
+     0.0039,  0.0118,  0.0196,  0.0275,  0.0353,  0.0431,  0.0510,  0.0588,
+     0.0667,  0.0745,  0.0824,  0.0902,  0.0980,  0.1059,  0.1137,  0.1216,
+     0.1294,  0.1373,  0.1451,  0.1529,  0.1608,  0.1686,  0.1765,  0.1843,
+     0.1922,  0.2000,  0.2078,  0.2157,  0.2235,  0.2314,  0.2392,  0.2471,
+     0.2549,  0.2627,  0.2706,  0.2784,  0.2863,  0.2941,  0.3020,  0.3098,
+     0.3176,  0.3255,  0.3333,  0.3412,  0.3490,  0.3569,  0.3647,  0.3725,
+     0.3804,  0.3882,  0.3961,  0.4039,  0.4118,  0.4196,  0.4275,  0.4353,
+     0.4431,  0.4510,  0.4588,  0.4667,  0.4745,  0.4824,  0.4902,  0.4980,
+     0.5059,  0.5137,  0.5216,  0.5294,  0.5373,  0.5451,  0.5529,  0.5608,
+     0.5686,  0.5765,  0.5843,  0.5922,  0.6000,  0.6078,  0.6157,  0.6235,
+     0.6314,  0.6392,  0.6471,  0.6549,  0.6627,  0.6706,  0.6784,  0.6863,
+     0.6941,  0.7020,  0.7098,  0.7176,  0.7255,  0.7333,  0.7412,  0.7490,
+     0.7569,  0.7647,  0.7725,  0.7804,  0.7882,  0.7961,  0.8039,  0.8118,
+     0.8196,  0.8275,  0.8353,  0.8431,  0.8510,  0.8588,  0.8667,  0.8745,
+     0.8824,  0.8902,  0.8980,  0.9059,  0.9137,  0.9216,  0.9294,  0.9373,
+     0.9451,  0.9529,  0.9608,  0.9686,  0.9765,  0.9843,  0.9922,  1.0000
+], dtype=torch.float32)
+
+assert value_map.numel() <= 256, "Int8 has at most 256 places"
+
 def weight_preprocess(w):
-  w = w + 1.2
-  return w
+  w_low = torch.bucketize(w, value_map[:-1]).to(torch.uint8)
 
-matmul_dequat_f32xf16 = autort.export(ir="""
-  my_result[M] +=! input0[K] * (input1[M, K] - 1.2).float32();
-""", inputs=["input0=float32[K]", "input1=float16[M, K]"], config='~M~:[4096,1,4],~K~:[4,16]')
+  # Debug closeness between w, w_low and w_recover ->
+  '''
+  print('True Origin Value =', w)
+  print('Low Rank Value =', w_low)
+  print('Recover from Low Rank =', torch.index_select(value_map, 0, w_low.view(-1).int()).view(w_low.shape))
+  exit(0)
+  '''
 
-def matmul_dequat(x, w, memory_out=None):
-  x = x.view(-1)
-  if memory_out is None:
-    return matmul_dequat_f32xf16(x, w)
-  return matmul_dequat_f32xf16(x, w, memory_out.view(-1), out=2)
+  return w_low
+
+value_map_gpu = value_map.to(autort.device())
+
+
+if False: # using standard TorchOps, but GPU memory will overflow
+
+  def matmul_dequat(x, w, memory_out=None):
+    x = x.view(-1)
+    memory_out = memory_out if memory_out is not None else torch.empty([w.size(0)], dtype=x.dtype, device=x.device)
+    w = torch.index_select(value_map_gpu, 0, w.view(-1).int()).view(w.shape)
+    return torch.matmul(x, w.t(), out=memory_out.view(1, -1))
+
+else:
+
+  my_custom_fn = autort.export(ir="""
+    w[M, K] = value_map_gpu[input1[M, K].unsigned_cast()]
+    my_result[M] +=! input0[K] * w[M, K]
+  """, inputs=["input0=float32[K]", "input1=int8[M, K]", "value_map_gpu=float32[L]"])
+
+  def matmul_dequat(x, w, memory_out=None):
+    x = x.view(-1)
+    memory_out = memory_out if memory_out is not None else torch.empty([w.size(0)], dtype=x.dtype, device=x.device)
+    return my_custom_fn(x, w, value_map_gpu, memory_out.view(-1), out=3)
 
 
 os.environ['D3D12_ENABLE_FP16'] = '1'

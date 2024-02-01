@@ -115,9 +115,9 @@ for n_layers in range(1024):
 device = autort.device()
 for k in param:
   print(f'Loading weight: {k}, val_min = {param[k].min()}, val_max = {param[k].max()}')
-  if k == 'model.embed_tokens.weight':
+  if k == 'model.embed_tokens.weight' or 'norm' in k:
     param[k] = param[k].float()
-  elif 'layernorm' not in k:
+  else:
     param[k] = weight_preprocess(param[k])
   param[k] = param[k].to(device)
 print('')

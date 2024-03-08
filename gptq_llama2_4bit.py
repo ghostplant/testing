@@ -9,12 +9,12 @@ vocab = torch.load(autort.download('./llama-2-7b-chat-hf/vocab_32K.pt', 'https:/
 dictionary = {}
 for i, word in enumerate(vocab):
   dictionary[word] = i
-    
+
 param = {}
-with safe_open('./Llama-2-7B-Chat-GPTQ/model.safetensors', framework='pt') as f:
+with safe_open(autort.download('./llama-2-7b-chat-hf/models_7b_int4.safetensors', 'https://huggingface.co/TheBloke/Llama-2-7B-Chat-GPTQ/resolve/main/model.safetensors?download=true'), framework='pt') as f:
   for k in f.keys():
     param[k] = f.get_tensor(k)
-        
+
 for n_layers in range(32):
   # We skipped `bias` and `g_idx` parameters here.
   try:
@@ -27,7 +27,7 @@ for n_layers in range(32):
     del param[f'model.layers.{n_layers}.self_attn.v_proj.qweight']
     del param[f'model.layers.{n_layers}.self_attn.k_proj.qweight']
     param[f'model.layers.{n_layers}.self_attn.vqk_proj.qweight'] = qweight_vqk
-    
+
     ####################################################
     ## qzeros are not requires, since they are all 8. ##
     ####################################################
@@ -38,7 +38,7 @@ for n_layers in range(32):
     del param[f'model.layers.{n_layers}.mlp.gate_proj.qzeros']
     del param[f'model.layers.{n_layers}.mlp.down_proj.qzeros']
     del param[f'model.layers.{n_layers}.mlp.up_proj.qzeros']
-    
+
     scales_q = param[f'model.layers.{n_layers}.self_attn.q_proj.scales']
     scales_v = param[f'model.layers.{n_layers}.self_attn.v_proj.scales']
     scales_k = param[f'model.layers.{n_layers}.self_attn.k_proj.scales']
@@ -48,7 +48,7 @@ for n_layers in range(32):
     del param[f'model.layers.{n_layers}.self_attn.v_proj.scales']
     del param[f'model.layers.{n_layers}.self_attn.k_proj.scales']
     param[f'model.layers.{n_layers}.self_attn.vqk_proj.scales'] = scales_vqk
-    
+
     # g_idx parameters are useless
     del param[f'model.layers.{n_layers}.self_attn.q_proj.g_idx']
     del param[f'model.layers.{n_layers}.self_attn.v_proj.g_idx']
@@ -57,7 +57,7 @@ for n_layers in range(32):
     del param[f'model.layers.{n_layers}.mlp.gate_proj.g_idx']
     del param[f'model.layers.{n_layers}.mlp.down_proj.g_idx']
     del param[f'model.layers.{n_layers}.mlp.up_proj.g_idx']
-    
+
     # bias parameters are useless
     del param[f'model.layers.{n_layers}.self_attn.q_proj.bias']
     del param[f'model.layers.{n_layers}.self_attn.v_proj.bias']
@@ -66,21 +66,24 @@ for n_layers in range(32):
     del param[f'model.layers.{n_layers}.mlp.gate_proj.bias']
     del param[f'model.layers.{n_layers}.mlp.down_proj.bias']
     del param[f'model.layers.{n_layers}.mlp.up_proj.bias']
-    
+
     n_inv_freq = f'model.layers.{n_layers}.self_attn.rotary_emb.inv_freq'
     if n_inv_freq in param:
       del param[n_inv_freq]
-      
+
   except KeyError:
     break
 
 
+use_float32 = True
 n_layers = 32
 
 device = autort.device()
 for k in param:
   # print(f'Loading weight: {k}')
   if k == 'model.embed_tokens.weight' or k == 'lm_head.weight' or 'norm' in k:
+    param[k] = param[k].float()
+  if use_float32 and param[k].dtype == torch.float16:
     param[k] = param[k].float()
   param[k] = param[k].to(device)
 
@@ -138,12 +141,13 @@ group_size = 128
 wf = torch.tensor(list(range(0, 32, bits)), dtype=torch.int32).unsqueeze(0).to(device)
 #---------------------------#
 
+scales_dtype = 'float32' if use_float32 else 'float16'
 
 my_custom_fn = autort.export(ir="""
   input1[S, N] = (qweight[S // 8, N] >> (S % 8 * 4)).call(strs.bitwise_and, 15) * input0[S].like(1)
   w[S, N] = scales[S // 128, N] * (input1[S, N] - 8)
-  my_result[N] +=! input0[S] * w[S, N]
-""", inputs=["input0=float32[S:4096]", "qweight=int32[L:512, N:12288]", "scales=float16[K:32, N:12288]"], config='~N~:[256,8,32],~S~:[64,8]')
+  my_result[N] +=! input0[S] * w[S, N].to(input0.dtype())
+""", inputs=["input0=float32[S:4096]", "qweight=int32[L:512, N:12288]", f"scales={scales_dtype}[K:32, N:12288]"], config='~N~:[256,8,32],~S~:[64,8]')
 
 
 def matmul_dequat(x, qweight, scales, memory_out=None):
@@ -158,23 +162,23 @@ def matmul_dequat(x, qweight, scales, memory_out=None):
 # """, inputs=["input0=float32[S:4096]", "input1=int8[S:4096, N:12288]", "scales=float32[K:32, 1, N:12288]"], config='~N~:[256,8,32],~S~:[64,8]')
 
 # def matmul_dequat(x, qweight, scales, memory_out=None):
-    
+
 #   scales = scales.view(-1, 1, scales.shape[-1]).to(torch.float32)
 #   weight = torch.bitwise_right_shift(
 #     torch.unsqueeze(qweight, 1).expand(-1, 32 // bits, -1),
 #     wf.unsqueeze(-1)
 #   ).to(torch.int8)
 #   weight = torch.bitwise_and(weight, (2**bits) - 1)
-  
+
 #   print(weight)
 #   exit(-1)
-  
+
 #   # print(weight.shape, weight.dtype)
 #   # torch.Size([512, 8, 12288]) torch.int8
-  
+
 #   x = x.view(-1)
 #   memory_out = memory_out if memory_out is not None else torch.empty([weight.size(-1)], dtype=x.dtype, device=x.device)
-  
+
 #   if True:
 #     weight = weight.view(-1, weight.size(2))
 #     return my_custom_fn(x, weight, scales, out=memory_out.view(-1))

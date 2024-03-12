@@ -22,16 +22,14 @@ def complex_matmul(a: Tensor, b: Tensor, groups: int = 1) -> Tensor:
     b = torch.movedim(b, (1, 2), (b.dim() - 1, b.dim() - 2))
 
     # complex value matrix multiplication
-    X = a.real @ b.real
-    Y = a.imag @ b.imag
-    real = a.real @ b.real - a.imag @ b.imag
-    imag = a.imag @ b.real + a.real @ b.imag
+    real = a.real @ b.real + a.imag @ b.imag
+    imag = a.imag @ b.real - a.real @ b.imag
 
     real = torch.movedim(real, real.dim() - 1, 2).squeeze(-1)
     imag = torch.movedim(imag, imag.dim() - 1, 2).squeeze(-1)
-    c = torch.zeros(real.shape, dtype=torch.complex64, device=a.device)
-    c.real, c.imag = real, imag
 
+    c = torch.cat([real.unsqueeze(0), imag.unsqueeze(0)], dim=0).view(2, -1).permute(1, 0).view(list(real.shape) + [-1]).contiguous()
+    c = torch.view_as_complex(c)
     return c.view(c.size(0), -1, *c.shape[3:])
 
 
@@ -131,7 +129,6 @@ def fft_conv(
     signal_fr = rfftn(signal.float(), dim=tuple(range(2, signal.ndim)))
     kernel_fr = rfftn(padded_kernel.float(), dim=tuple(range(2, signal.ndim)))
 
-    kernel_fr.imag *= -1
     output_fr = complex_matmul(signal_fr, kernel_fr, groups=groups)
     output = irfftn(output_fr, dim=tuple(range(2, signal.ndim)))
 
@@ -152,13 +149,13 @@ def fft_conv(
 
 torch.manual_seed(0)
 
-x = torch.randn([2, 3, 8, 8])
-y = torch.randn([4, 3, 3, 3])
+x = torch.randn([64, 3, 128, 128])
+y = torch.randn([32, 3, 3, 3])
 
 x, y = x.to(autort.device()), y.to(autort.device())
 z = fft_conv(x, y).cpu()
 z2 = torch.nn.functional.conv2d(x.cpu(), y.cpu())
-print('Device Result Sum:', z.sum().item())
-print('CPU Result Sum:' , z2.sum().item())
-print('Max Diff: ', (z - z2).max().item())
+print('Custom Result Sum:', z.sum().item())
+print('CUDNN Result Sum:' , z2.sum().item())
+print('Max Difference: ', (z - z2).max().item())
 print('Output Shape', z.shape)

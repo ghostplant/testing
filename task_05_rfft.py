@@ -24,7 +24,7 @@ void main() {
           output(1, n, c, h, wo) = 456;
 }
 ''')
-os.system('autort -n /tmp/rfft_f32.cxx >/dev/null')
+assert 0 == os.system('autort -n /tmp/rfft_f32.cxx >/dev/null')
 ##########################################################################
 
 device = autort.device()

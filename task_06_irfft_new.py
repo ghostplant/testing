@@ -162,17 +162,8 @@ z = torch.zeros([2, 1, 1, 8, 5], dtype=torch.float32, device=device)
 for i in range(2):
     z[i, 0, 0, :, :] = y.real if i == 0 else y.imag
 
-print(z)
-
-output_irfftn = torch.zeros([1, 1, 8, 8], dtype=torch.float32, device=device)
-autort.ops.irfftn_f32(z, temp_w, temp_h, output_irfftn)
-
+output_irfftn = autort.ops.irfftn_f32(z, temp_w, temp_h)
 print(output_irfftn)
-# print(z)
-# print(temp_h)
-# print(torch.fft.ifft(y, dim=-2))
-
-# print(torch.max(torch.abs(temp_output - torch.fft.ifft(y, dim=-2))))
 
 diff = torch.max(torch.abs(output_cudnn - output_irfftn))
 print('Max diff: ', diff)

@@ -7,7 +7,7 @@ import os
 os.environ['LOG'] = '1'
 
 fn_rfft = autort.export(name='rfftn_f32', source=r'''
-@DEF_FUNC: input:float32[N, C, H, W], temp_w:float32[2, W], temp_h:float32[2, H] -> output:float32[2, N, C, H, WO]
+@DEF_FUNC: input:float32[N, C, H, W], temp_w:float32[2, W], temp_h:float32[2, H], order_w:int32[W], order_h:int32[H] -> output:float32[2, N, C, H, WO]
 
 void main() {
     
@@ -25,23 +25,13 @@ void main() {
           temp_w(1, w) = 0;
         }
         
-        int i, j, k;
-        for (i = 1, j = m / 2; i < m - 1; ++i) {
-          if (i < j) {
+        for (int i = 0; i < size_of_W(); ++i) {
+          // swap x[i] and x[order[i]]
+          if (i < order_w(i)) {
             float t = temp_w(0, i);
-            temp_w(0, i) = temp_w(0, j);
-            temp_w(0, j) = t;
-            t = temp_w(1, i);
-            temp_w(1, i) = temp_w(1, j);
-            temp_w(1, j) = t;
-          }
-          k = m / 2;
-          while (j >= k) {
-            j = j - k;
-            k = k / 2;
-          }
-          if (j < k) {
-            j += k;
+            temp_w(0, i) = temp_w(0, order_w(i));
+            temp_w(0, order_w(i)) = t;
+            // no need to swap the imaginary part because it is always 0
           }
         }
         
@@ -90,23 +80,15 @@ void main() {
           temp_h(1, h) = output(1, n, c, h, w);
         }
         
-        int i, j, k;
-        for (i = 1, j = m / 2; i < m - 1; ++i) {
-          if (i < j) {
+        for (int i = 0; i < size_of_H(); ++i) {
+          // swap x[i] and x[order[i]]
+          if (i < order_h(i)) {
             float t = temp_h(0, i);
-            temp_h(0, i) = temp_h(0, j);
-            temp_h(0, j) = t;
+            temp_h(0, i) = temp_h(0, order_h(i));
+            temp_h(0, order_h(i)) = t;
             t = temp_h(1, i);
-            temp_h(1, i) = temp_h(1, j);
-            temp_h(1, j) = t;
-          }
-          k = m / 2;
-          while (j >= k) {
-            j = j - k;
-            k = k / 2;
-          }
-          if (j < k) {
-            j += k;
+            temp_h(1, i) = temp_h(1, order_h(i));
+            temp_h(1, order_h(i)) = t;
           }
         }
         
@@ -154,8 +136,25 @@ print(output_cudnn.imag)
 
 temp_w = torch.zeros([2, x.size(-1)], dtype=torch.float32, device=device)
 temp_h = torch.zeros([2, x.size(-2)], dtype=torch.float32, device=device)
+
+W, H = x.size(-1), x.size(-2)
+order_w = [0] * W
+for i in range(W):
+  order_w[i] = order_w[i >> 1] >> 1
+  if i & 1:
+    order_w[i] |= W >> 1
+    
+order_h = [0] * H
+for i in range(H):
+  order_h[i] = order_h[i >> 1] >> 1
+  if i & 1:
+    order_h[i] |= H >> 1
+    
+order_w = torch.tensor(order_w, dtype=torch.int32, device=device)
+order_h = torch.tensor(order_h, dtype=torch.int32, device=device)
+
 output_rfftn = torch.zeros([2, 1, 1, 8, 5], dtype=torch.float32, device=device)
-autort.ops.rfftn_f32(x, temp_w, temp_h, output_rfftn)
+autort.ops.rfftn_f32(x, temp_w, temp_h, order_w, order_h, output_rfftn)
 
 print(output_rfftn[0])
 print(output_rfftn[1])
